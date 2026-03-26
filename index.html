@@ -512,10 +512,17 @@ window.generate = async function() {
       btn.innerHTML = `<span class="spinner"></span>動画を生成中... (${i * 10}秒)`;
       await new Promise(r => setTimeout(r, 10000));
       try {
-        result = await ai.operations.get({ operation: operationName });
+        result = await ai.operations.get({ name: operationName });
         console.log(`Poll ${i + 1}:`, result.done ? 'done' : 'in progress');
       } catch (pollErr) {
         console.warn(`Poll ${i + 1} failed:`, pollErr);
+        // Fallback: try alternative parameter format
+        try {
+          result = await ai.operations.get(operationName);
+          console.log(`Poll ${i + 1} (fallback):`, result.done ? 'done' : 'in progress');
+        } catch (e2) {
+          console.warn(`Poll ${i + 1} fallback also failed:`, e2);
+        }
       }
     }
 

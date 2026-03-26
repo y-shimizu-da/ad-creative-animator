@@ -532,7 +532,8 @@ window.generate = async function() {
 
     console.log('Final result:', JSON.stringify(pollResult, null, 2));
 
-    const videos = pollResult.response?.generateVideosResponse?.generatedVideos
+    const videos = pollResult.response?.generateVideoResponse?.generatedSamples
+                || pollResult.response?.generateVideosResponse?.generatedVideos
                 || pollResult.response?.generatedVideos
                 || pollResult.generatedVideos;
     if (!videos || videos.length === 0) throw new Error('動画の生成結果が取得できませんでした');
@@ -540,10 +541,12 @@ window.generate = async function() {
     const videoUri = videos[0].video?.uri;
     if (!videoUri) throw new Error('動画URIが取得できませんでした');
 
-    // Download video and create blob URL
+    // Download video - need API key for authenticated URI
     btn.innerHTML = '<span class="spinner"></span>動画をダウンロード中...';
-    const videoRes = await fetch(videoUri);
-    if (!videoRes.ok) throw new Error('動画のダウンロードに失敗しました');
+    const needsKey = videoUri.includes('generativelanguage.googleapis.com');
+    const downloadUrl = needsKey ? `${videoUri}${videoUri.includes('?') ? '&' : '?'}key=${apiKey}` : videoUri;
+    const videoRes = await fetch(downloadUrl);
+    if (!videoRes.ok) throw new Error(`動画のダウンロードに失敗しました (${videoRes.status})`);
     const blob = await videoRes.blob();
     const blobUrl = URL.createObjectURL(blob);
 

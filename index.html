@@ -505,32 +505,36 @@ window.generate = async function() {
       throw new Error('動画生成オペレーションの開始に失敗しました。APIキーにVeo 2の利用権限があるか確認してください。');
     }
 
-    // Poll
-    let result = operation;
+    // Poll using REST API directly (SDK operations.get has parameter issues)
+    const pollUrl = `https://generativelanguage.googleapis.com/v1beta/${operationName}`;
+    let pollResult = null;
+
     for (let i = 0; i < 60; i++) {
-      if (result.done) break;
-      btn.innerHTML = `<span class="spinner"></span>動画を生成中... (${i * 10}秒)`;
+      if (operation.done && i === 0) { pollResult = operation; break; }
+      btn.innerHTML = `<span class="spinner"></span>動画を生成中... (${i * 10}秒経過)`;
       await new Promise(r => setTimeout(r, 10000));
       try {
-        result = await ai.operations.get({ name: operationName });
-        console.log(`Poll ${i + 1}:`, result.done ? 'done' : 'in progress');
+        const pollRes = await fetch(`${pollUrl}?key=${apiKey}`);
+        if (!pollRes.ok) {
+          const errData = await pollRes.json().catch(() => ({}));
+          console.warn(`Poll ${i + 1} HTTP ${pollRes.status}:`, errData);
+          continue;
+        }
+        pollResult = await pollRes.json();
+        console.log(`Poll ${i + 1}:`, pollResult.done ? 'done!' : 'in progress...', pollResult);
+        if (pollResult.done) break;
       } catch (pollErr) {
         console.warn(`Poll ${i + 1} failed:`, pollErr);
-        // Fallback: try alternative parameter format
-        try {
-          result = await ai.operations.get(operationName);
-          console.log(`Poll ${i + 1} (fallback):`, result.done ? 'done' : 'in progress');
-        } catch (e2) {
-          console.warn(`Poll ${i + 1} fallback also failed:`, e2);
-        }
       }
     }
 
-    if (!result.done) throw new Error('動画生成がタイムアウトしました（10分以上）');
+    if (!pollResult?.done) throw new Error('動画生成がタイムアウトしました（10分以上）');
 
-    console.log('Final result:', JSON.stringify(result, null, 2));
+    console.log('Final result:', JSON.stringify(pollResult, null, 2));
 
-    const videos = result.response?.generatedVideos;
+    const videos = pollResult.response?.generateVideosResponse?.generatedVideos
+                || pollResult.response?.generatedVideos
+                || pollResult.generatedVideos;
     if (!videos || videos.length === 0) throw new Error('動画の生成結果が取得できませんでした');
 
     const videoUri = videos[0].video?.uri;

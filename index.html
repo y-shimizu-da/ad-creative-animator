@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ad Creative Animator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+
+header { border-bottom: 1px solid #334155; padding: 16px 24px; }
+header h1 { font-size: 20px; color: #fff; }
+header p { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+
+.container { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+
+/* Steps */
+.steps { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+.step { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 20px; font-size: 13px; background: #334155; color: #94a3b8; }
+.step.active { background: #2563eb; color: #fff; }
+.step-line { width: 32px; height: 2px; background: #334155; }
+.step-line.active { background: #2563eb; }
+
+/* API Key */
+.api-key-section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+.api-key-section label { font-size: 13px; color: #94a3b8; display: block; margin-bottom: 6px; }
+.api-key-section input { width: 100%; background: #0f172a; border: 1px solid #475569; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 14px; outline: none; }
+.api-key-section input:focus { border-color: #3b82f6; }
+.api-key-section .hint { font-size: 11px; color: #64748b; margin-top: 6px; }
+
+/* Upload */
+.upload-zone { border: 2px dashed #475569; border-radius: 12px; padding: 60px 20px; text-align: center; cursor: pointer; transition: all 0.2s; }
+.upload-zone:hover { border-color: #94a3b8; }
+.upload-zone.dragging { border-color: #3b82f6; background: rgba(37,99,235,0.1); }
+.upload-zone .icon { font-size: 48px; margin-bottom: 12px; }
+.upload-zone .main-text { font-size: 16px; color: #cbd5e1; }
+.upload-zone .sub-text { font-size: 13px; color: #64748b; margin-top: 8px; }
+.upload-zone input { display: none; }
+
+/* Editor */
+.editor { display: none; }
+.editor.visible { display: block; }
+
+.brush-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: #1e293b; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
+.brush-controls button { padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
+.btn-brush { background: #ef4444; color: #fff; }
+.btn-brush.inactive { background: #334155; color: #cbd5e1; }
+.btn-eraser { background: #3b82f6; color: #fff; }
+.btn-eraser.inactive { background: #334155; color: #cbd5e1; }
+.btn-action { background: #334155; color: #cbd5e1; }
+.btn-action:hover { background: #475569; }
+.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.brush-size { display: flex; align-items: center; gap: 6px; }
+.brush-size label { font-size: 13px; color: #94a3b8; }
+.brush-size input[type="range"] { width: 100px; accent-color: #3b82f6; }
+.brush-size span { font-size: 13px; color: #94a3b8; width: 28px; }
+
+.canvas-hint { font-size: 13px; color: #94a3b8; margin-bottom: 8px; }
+
+.canvas-wrap { background: #0f172a; border-radius: 8px; padding: 16px; display: flex; justify-content: center; overflow: auto; position: relative; margin-bottom: 16px; }
+.canvas-wrap canvas { cursor: crosshair; border-radius: 4px; }
+
+/* Prompt */
+.prompt-section { margin-bottom: 16px; }
+.prompt-section label { display: block; font-size: 13px; font-weight: 500; color: #cbd5e1; margin-bottom: 6px; }
+.prompt-section textarea { width: 100%; background: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 12px 14px; color: #fff; font-size: 14px; resize: none; outline: none; font-family: inherit; }
+.prompt-section textarea:focus { border-color: #3b82f6; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.suggestions button { font-size: 12px; padding: 4px 10px; border-radius: 20px; background: #334155; color: #94a3b8; border: none; cursor: pointer; transition: all 0.2s; }
+.suggestions button:hover { background: #475569; color: #fff; }
+
+/* Buttons */
+.action-buttons { display: flex; gap: 10px; }
+.btn-back { padding: 10px 20px; border-radius: 8px; background: #334155; color: #cbd5e1; border: none; cursor: pointer; font-size: 14px; }
+.btn-back:hover { background: #475569; }
+.btn-generate { flex: 1; padding: 10px 20px; border-radius: 8px; background: #2563eb; color: #fff; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
+.btn-generate:hover { background: #1d4ed8; }
+.btn-generate:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Error */
+.error-msg { background: rgba(220,38,38,0.15); border: 1px solid #991b1b; border-radius: 8px; padding: 10px 14px; color: #fca5a5; font-size: 13px; margin-bottom: 12px; display: none; }
+.error-msg.visible { display: block; }
+
+/* Video Preview */
+.video-preview { display: none; }
+.video-preview.visible { display: block; }
+.video-preview video { max-width: 100%; border-radius: 8px; display: block; margin: 0 auto; }
+.video-wrap { background: #0f172a; border-radius: 8px; padding: 16px; margin-bottom: 16px; text-align: center; }
+.btn-download { flex: 1; padding: 10px 20px; border-radius: 8px; background: #16a34a; color: #fff; border: none; cursor: pointer; font-size: 14px; font-weight: 600; text-decoration: none; text-align: center; display: block; }
+.btn-download:hover { background: #15803d; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ad Creative Animator</h1>
+  <p>広告クリエイティブの特定部分をAIで動画化</p>
+</header>
+
+<div class="container">
+  <!-- Steps -->
+  <div class="steps">
+    <div class="step active" id="step1">1 画像アップロード</div>
+    <div class="step-line" id="line1"></div>
+    <div class="step" id="step2">2 マスク描画 & プロンプト</div>
+    <div class="step-line" id="line2"></div>
+    <div class="step" id="step3">3 動画プレビュー</div>
+  </div>
+
+  <!-- API Key -->
+  <div class="api-key-section">
+    <label>Gemini API キー</label>
+    <input type="password" id="apiKey" placeholder="AIza... から始まるキーを入力">
+    <div class="hint">
+      <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#60a5fa;">Google AI Studio</a> で無料取得できます。キーはブラウザ内のみで使用され、外部に送信されません。
+    </div>
+  </div>
+
+  <!-- Step 1: Upload -->
+  <div id="uploadSection">
+    <div class="upload-zone" id="uploadZone">
+      <div class="icon">🖼️</div>
+      <div class="main-text">広告クリエイティブ画像をドラッグ&ドロップ</div>
+      <div class="sub-text">またはクリックしてファイルを選択（PNG, JPEG, WebP / 最大10MB）</div>
+      <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp">
+    </div>
+  </div>
+
+  <!-- Step 2: Editor -->
+  <div class="editor" id="editorSection">
+    <div class="brush-controls">
+      <button class="btn-brush" id="btnBrush" onclick="setTool('brush')">ブラシ</button>
+      <button class="btn-eraser inactive" id="btnEraser" onclick="setTool('eraser')">消しゴム</button>
+      <div class="brush-size">
+        <label>サイズ</label>
+        <input type="range" min="5" max="100" value="30" id="brushSize" oninput="updateBrushSize()">
+        <span id="brushSizeLabel">30</span>
+      </div>
+      <div style="margin-left:auto; display:flex; gap:8px;">
+        <button class="btn-action" id="btnUndo" onclick="undo()" disabled>元に戻す</button>
+        <button class="btn-action" onclick="clearMask()">全消去</button>
+      </div>
+    </div>
+
+    <div class="canvas-hint">アニメーションさせたい部分をブラシで塗ってください（赤色のエリア）</div>
+
+    <div class="canvas-wrap">
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="prompt-section">
+      <label>アニメーションの指示</label>
+      <textarea id="promptInput" rows="2" placeholder="マスクした部分をどのように動かすか指示してください（例: 髪を風になびかせて）"></textarea>
+      <div class="suggestions">
+        <button onclick="addSuggestion('風になびかせて')">風になびかせて</button>
+        <button onclick="addSuggestion('ゆっくり揺らして')">ゆっくり揺らして</button>
+        <button onclick="addSuggestion('光を反射させて')">光を反射させて</button>
+        <button onclick="addSuggestion('ふわっと浮遊させて')">ふわっと浮遊させて</button>
+        <button onclick="addSuggestion('水面のように波打たせて')">水面のように波打たせて</button>
+      </div>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="action-buttons">
+      <button class="btn-back" onclick="goToUpload()">戻る</button>
+      <button class="btn-generate" id="btnGenerate" onclick="generate()" disabled>動画を生成</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Video Preview -->
+  <div class="video-preview" id="videoSection">
+    <div class="video-wrap">
+      <video id="videoPlayer" controls autoplay loop></video>
+    </div>
+    <div class="action-buttons">
+      <button class="btn-back" onclick="goToUpload()">最初からやり直す</button>
+      <a class="btn-download" id="downloadLink" download="animated-creative.mp4">動画をダウンロード</a>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { GoogleGenAI } from 'https://esm.run/@google/genai';
+
+// ===== State =====
+let originalImage = null;   // HTMLImageElement
+let originalFile = null;    // File
+let lines = [];             // [{points, brushSize, isEraser}]
+let history = [];
+let isDrawing = false;
+let currentTool = 'brush';
+let brushSize = 30;
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const MAX_W = 900;
+
+// ===== Upload =====
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragging'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragging'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragging');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  const allowed = ['image/png', 'image/jpeg', 'image/webp'];
+  if (!allowed.includes(file.type)) { alert('PNG, JPEG, WebP のみ対応しています'); return; }
+  if (file.size > 10 * 1024 * 1024) { alert('ファイルサイズは10MB以下にしてください'); return; }
+
+  originalFile = file;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      originalImage = img;
+      initCanvas();
+      goToEditor();
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ===== Canvas =====
+function initCanvas() {
+  const scale = Math.min(1, MAX_W / originalImage.width);
+  canvas.width = Math.round(originalImage.width * scale);
+  canvas.height = Math.round(originalImage.height * scale);
+  lines = [];
+  history = [];
+  redraw();
+  updateButtons();
+}
+
+function redraw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+
+  // Draw mask overlay
+  const overlay = document.createElement('canvas');
+  overlay.width = canvas.width;
+  overlay.height = canvas.height;
+  const octx = overlay.getContext('2d');
+
+  for (const line of lines) {
+    octx.globalCompositeOperation = line.isEraser ? 'destination-out' : 'source-over';
+    octx.strokeStyle = 'rgba(255,0,0,1)';
+    octx.lineWidth = line.brushSize;
+    octx.lineCap = 'round';
+    octx.lineJoin = 'round';
+    octx.beginPath();
+    for (let i = 0; i < line.points.length; i += 2) {
+      if (i === 0) octx.moveTo(line.points[i], line.points[i+1]);
+      else octx.lineTo(line.points[i], line.points[i+1]);
+    }
+    octx.stroke();
+  }
+
+  ctx.globalAlpha = 0.4;
+  ctx.drawImage(overlay, 0, 0);
+  ctx.globalAlpha = 1.0;
+}
+
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+}
+
+canvas.addEventListener('mousedown', e => startDraw(getPos(e)));
+canvas.addEventListener('mousemove', e => moveDraw(getPos(e)));
+canvas.addEventListener('mouseup', endDraw);
+canvas.addEventListener('mouseleave', endDraw);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); startDraw(getPos(e)); }, { passive: false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); moveDraw(getPos(e)); }, { passive: false });
+canvas.addEventListener('touchend', endDraw);
+
+function startDraw(pos) {
+  isDrawing = true;
+  history.push(JSON.parse(JSON.stringify(lines)));
+  lines.push({ points: [pos.x, pos.y], brushSize, isEraser: currentTool === 'eraser' });
+  redraw();
+}
+
+function moveDraw(pos) {
+  if (!isDrawing) return;
+  const last = lines[lines.length - 1];
+  last.points.push(pos.x, pos.y);
+  redraw();
+}
+
+function endDraw() {
+  if (!isDrawing) return;
+  isDrawing = false;
+  updateButtons();
+}
+
+// ===== Mask Export =====
+function exportMask() {
+  const w = originalImage.naturalWidth;
+  const h = originalImage.naturalHeight;
+  const scaleX = w / canvas.width;
+  const scaleY = h / canvas.height;
+
+  const mc = document.createElement('canvas');
+  mc.width = w;
+  mc.height = h;
+  const mctx = mc.getContext('2d');
+  mctx.fillStyle = '#000';
+  mctx.fillRect(0, 0, w, h);
+
+  for (const line of lines) {
+    mctx.globalCompositeOperation = line.isEraser ? 'destination-out' : 'source-over';
+    mctx.strokeStyle = '#fff';
+    mctx.lineWidth = line.brushSize * Math.max(scaleX, scaleY);
+    mctx.lineCap = 'round';
+    mctx.lineJoin = 'round';
+    mctx.beginPath();
+    for (let i = 0; i < line.points.length; i += 2) {
+      const x = line.points[i] * scaleX;
+      const y = line.points[i+1] * scaleY;
+      if (i === 0) mctx.moveTo(x, y);
+      else mctx.lineTo(x, y);
+    }
+    mctx.stroke();
+  }
+
+  return mc.toDataURL('image/png');
+}
+
+function imageToBase64() {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.readAsDataURL(originalFile);
+  });
+}
+
+// ===== Tools =====
+window.setTool = function(tool) {
+  currentTool = tool;
+  document.getElementById('btnBrush').className = tool === 'brush' ? 'btn-brush' : 'btn-brush inactive';
+  document.getElementById('btnEraser').className = tool === 'eraser' ? 'btn-eraser' : 'btn-eraser inactive';
+};
+
+window.updateBrushSize = function() {
+  brushSize = parseInt(document.getElementById('brushSize').value);
+  document.getElementById('brushSizeLabel').textContent = brushSize;
+};
+
+window.undo = function() {
+  if (history.length === 0) return;
+  lines = history.pop();
+  redraw();
+  updateButtons();
+};
+
+window.clearMask = function() {
+  if (lines.length === 0) return;
+  history.push(JSON.parse(JSON.stringify(lines)));
+  lines = [];
+  redraw();
+  updateButtons();
+};
+
+window.addSuggestion = function(text) {
+  const input = document.getElementById('promptInput');
+  input.value = input.value ? input.value + ' ' + text : text;
+  updateButtons();
+};
+
+function hasMask() {
+  return lines.some(l => !l.isEraser);
+}
+
+function updateButtons() {
+  document.getElementById('btnUndo').disabled = history.length === 0;
+  const prompt = document.getElementById('promptInput').value.trim();
+  document.getElementById('btnGenerate').disabled = !hasMask() || !prompt;
+}
+
+document.getElementById('promptInput').addEventListener('input', updateButtons);
+
+// ===== Navigation =====
+function setStep(n) {
+  ['step1','step2','step3'].forEach((id, i) => {
+    document.getElementById(id).className = i <= n - 1 ? 'step active' : 'step';
+  });
+  ['line1','line2'].forEach((id, i) => {
+    document.getElementById(id).className = i < n - 1 ? 'step-line active' : 'step-line';
+  });
+}
+
+window.goToUpload = function() {
+  setStep(1);
+  document.getElementById('uploadSection').style.display = '';
+  document.getElementById('editorSection').classList.remove('visible');
+  document.getElementById('videoSection').classList.remove('visible');
+  fileInput.value = '';
+};
+
+function goToEditor() {
+  setStep(2);
+  document.getElementById('uploadSection').style.display = 'none';
+  document.getElementById('editorSection').classList.add('visible');
+  document.getElementById('videoSection').classList.remove('visible');
+}
+
+function goToVideo(url) {
+  setStep(3);
+  document.getElementById('uploadSection').style.display = 'none';
+  document.getElementById('editorSection').classList.remove('visible');
+  document.getElementById('videoSection').classList.add('visible');
+  document.getElementById('videoPlayer').src = url;
+  document.getElementById('downloadLink').href = url;
+}
+
+// ===== Generate =====
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function hideError() {
+  document.getElementById('errorMsg').classList.remove('visible');
+}
+
+window.generate = async function() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) { showError('Gemini API キーを入力してください'); return; }
+  if (!hasMask()) { showError('マスクを描画してください'); return; }
+  const prompt = document.getElementById('promptInput').value.trim();
+  if (!prompt) { showError('プロンプトを入力してください'); return; }
+
+  hideError();
+  const btn = document.getElementById('btnGenerate');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>マスク領域を解析中...';
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const maskBase64 = exportMask();
+    const imageDataUrl = await imageToBase64();
+
+    const cleanImage = imageDataUrl.split(',')[1];
+    const cleanMask = maskBase64.split(',')[1];
+    const imageMime = originalFile.type;
+
+    // Step 1: Analyze masked region with Gemini Flash
+    btn.innerHTML = '<span class="spinner"></span>マスク領域を解析中...';
+    let regionDesc = 'the selected region';
+    try {
+      const analysis = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: imageMime, data: cleanImage } },
+            { inlineData: { mimeType: 'image/png', data: cleanMask } },
+            { text: 'The first image is an advertisement creative. The second image is a mask where white regions indicate selected areas. Describe what is in the white/selected region of the first image in 1-2 concise sentences in English.' }
+          ]
+        }]
+      });
+      regionDesc = analysis.text || regionDesc;
+      console.log('Region:', regionDesc);
+    } catch (e) {
+      console.warn('Region analysis failed:', e);
+    }
+
+    // Step 2: Generate video with Veo 2
+    const enhancedPrompt = `Generate a smooth, high-quality video from this image. Animate ${regionDesc}: ${prompt}. IMPORTANT: Keep ALL other parts of the image completely static and unchanged. No camera movement, no zoom, no pan. Only the specified region should move. The animation should be natural, smooth, and seamless for looping.`;
+    console.log('Enhanced prompt:', enhancedPrompt);
+
+    btn.innerHTML = '<span class="spinner"></span>動画を生成中（1〜2分）...';
+
+    const operation = await ai.models.generateVideos({
+      model: 'veo-2.0-generate-001',
+      prompt: enhancedPrompt,
+      image: { imageBytes: cleanImage, mimeType: imageMime },
+      config: { aspectRatio: '16:9', durationSeconds: 8 }
+    });
+
+    // Poll
+    let result = operation;
+    for (let i = 0; i < 60; i++) {
+      if (result.done) break;
+      btn.innerHTML = `<span class="spinner"></span>動画を生成中... (${i * 10}秒)`;
+      await new Promise(r => setTimeout(r, 10000));
+      if (result.name) {
+        result = await ai.operations.get({ operation: result.name });
+      }
+    }
+
+    if (!result.done) throw new Error('動画生成がタイムアウトしました（10分以上）');
+
+    const videos = result.response?.generatedVideos;
+    if (!videos || videos.length === 0) throw new Error('動画の生成結果が取得できませんでした');
+
+    const videoUri = videos[0].video?.uri;
+    if (!videoUri) throw new Error('動画URIが取得できませんでした');
+
+    // Download video and create blob URL
+    btn.innerHTML = '<span class="spinner"></span>動画をダウンロード中...';
+    const videoRes = await fetch(videoUri);
+    if (!videoRes.ok) throw new Error('動画のダウンロードに失敗しました');
+    const blob = await videoRes.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    goToVideo(blobUrl);
+
+  } catch (err) {
+    console.error(err);
+    showError(err.message || '予期しないエラーが発生しました');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '動画を生成';
+    updateButtons();
+  }
+};
+</script>
+</body>
+</html>

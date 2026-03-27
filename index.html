@@ -474,7 +474,7 @@ window.generate = async function() {
           parts: [
             { inlineData: { mimeType: imageMime, data: cleanImage } },
             { inlineData: { mimeType: 'image/png', data: cleanMask } },
-            { text: 'The first image is an advertisement creative. The second image is a mask where white regions indicate selected areas. Describe what is in the white/selected region of the first image in 1-2 concise sentences in English.' }
+            { text: 'The first image is an advertisement creative. The second image is a mask where white regions indicate selected areas. Describe ONLY the specific object/person/element in the white/selected region in 1 concise sentence in English. Be specific (e.g. "the woman\'s upper body and face" not just "a woman"). Do not describe the background or text.' }
           ]
         }]
       });
@@ -485,7 +485,7 @@ window.generate = async function() {
     }
 
     // Step 2: Generate video with Veo 2
-    const enhancedPrompt = `Generate a smooth, high-quality video from this image. Animate ${regionDesc}: ${prompt}. IMPORTANT: Keep ALL other parts of the image completely static and unchanged. No camera movement, no zoom, no pan. Only the specified region should move. The animation should be natural, smooth, and seamless for looping.`;
+    const enhancedPrompt = `Generate a smooth, high-quality, photorealistic video from this image. Animate ${regionDesc}: ${prompt}. CRITICAL RULES: 1) Keep ALL other parts of the image completely static and unchanged, especially text, logos, and background elements. 2) Maintain sharp, clear details on faces, skin, hands, and clothing - no blur, no ghosting, no transparency. 3) No camera movement, no zoom, no pan, no rotation. 4) The animation should be subtle, natural, and physically realistic. 5) Preserve the exact lighting and color of the original image.`;
     console.log('Enhanced prompt:', enhancedPrompt);
 
     btn.innerHTML = '<span class="spinner"></span>画像を準備中...';

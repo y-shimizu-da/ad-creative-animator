@@ -490,11 +490,20 @@ window.generate = async function() {
 
     btn.innerHTML = '<span class="spinner"></span>動画を生成中（1〜2分）...';
 
+    // Detect aspect ratio from original image
+    const imgW = originalImage.naturalWidth;
+    const imgH = originalImage.naturalHeight;
+    const ratio = imgW / imgH;
+    let aspectRatio = '16:9';
+    if (ratio < 0.7) aspectRatio = '9:16';
+    else if (ratio >= 0.7 && ratio <= 1.4) aspectRatio = '16:9'; // closest available
+    console.log(`Image: ${imgW}x${imgH}, ratio: ${ratio.toFixed(2)}, using: ${aspectRatio}`);
+
     const operation = await ai.models.generateVideos({
       model: 'veo-2.0-generate-001',
       prompt: enhancedPrompt,
       image: { imageBytes: cleanImage, mimeType: imageMime },
-      config: { aspectRatio: '16:9', durationSeconds: 8 }
+      config: { aspectRatio, durationSeconds: 8 }
     });
 
     console.log('Operation response:', JSON.stringify(operation, null, 2));
@@ -547,10 +556,15 @@ window.generate = async function() {
     const downloadUrl = needsKey ? `${videoUri}${videoUri.includes('?') ? '&' : '?'}key=${apiKey}` : videoUri;
     const videoRes = await fetch(downloadUrl);
     if (!videoRes.ok) throw new Error(`動画のダウンロードに失敗しました (${videoRes.status})`);
-    const blob = await videoRes.blob();
-    const blobUrl = URL.createObjectURL(blob);
+    const rawBlob = await videoRes.blob();
+    const rawBlobUrl = URL.createObjectURL(rawBlob);
 
-    goToVideo(blobUrl);
+    // Composite: mask area from video + original image for unmasked area
+    btn.innerHTML = '<span class="spinner"></span>マスク合成処理中...';
+    const compositedUrl = await compositeVideoWithMask(rawBlobUrl, maskBase64, apiKey);
+    URL.revokeObjectURL(rawBlobUrl);
+
+    goToVideo(compositedUrl);
 
   } catch (err) {
     console.error(err);
@@ -561,6 +575,119 @@ window.generate = async function() {
     updateButtons();
   }
 };
+
+// ===== Video + Mask Compositing =====
+// Overlays only the masked region from the generated video onto the original static image
+async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.src = videoBlobUrl;
+    video.muted = true;
+    video.playsInline = true;
+
+    // Load mask as image
+    const maskImg = new Image();
+    maskImg.src = maskDataUrl;
+
+    video.onloadedmetadata = () => {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const ow = originalImage.naturalWidth;
+      const oh = originalImage.naturalHeight;
+
+      console.log(`Compositing: video ${vw}x${vh}, original ${ow}x${oh}`);
+
+      // Output canvas at original image size
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = ow;
+      outCanvas.height = oh;
+      const outCtx = outCanvas.getContext('2d');
+
+      // Temp canvas for video frame at original size
+      const tmpCanvas = document.createElement('canvas');
+      tmpCanvas.width = ow;
+      tmpCanvas.height = oh;
+      const tmpCtx = tmpCanvas.getContext('2d');
+
+      // Mask canvas for per-pixel blending
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = ow;
+      maskCanvas.height = oh;
+      const maskCtx = maskCanvas.getContext('2d');
+
+      // Draw mask
+      maskImg.onload = () => {
+        maskCtx.drawImage(maskImg, 0, 0, ow, oh);
+        startRecording();
+      };
+      if (maskImg.complete) {
+        maskCtx.drawImage(maskImg, 0, 0, ow, oh);
+        startRecording();
+      }
+
+      function startRecording() {
+        // Use MediaRecorder to capture composited frames
+        const stream = outCanvas.captureStream(30);
+        const recorder = new MediaRecorder(stream, {
+          mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? 'video/webm;codecs=vp9'
+            : 'video/webm',
+          videoBitsPerSecond: 8000000
+        });
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          resolve(URL.createObjectURL(blob));
+        };
+        recorder.onerror = e => reject(new Error('録画エラー: ' + e.error));
+
+        const maskData = maskCtx.getImageData(0, 0, ow, oh);
+
+        let frameCount = 0;
+
+        function processFrame() {
+          if (video.paused || video.ended) {
+            recorder.stop();
+            console.log(`Compositing done: ${frameCount} frames`);
+            return;
+          }
+
+          // Draw video frame scaled to original image size
+          tmpCtx.drawImage(video, 0, 0, ow, oh);
+          const videoFrame = tmpCtx.getImageData(0, 0, ow, oh);
+
+          // Draw original image
+          outCtx.drawImage(originalImage, 0, 0, ow, oh);
+          const origData = outCtx.getImageData(0, 0, ow, oh);
+
+          // Blend: where mask is white, use video; where black, use original
+          const out = origData.data;
+          const vid = videoFrame.data;
+          const mask = maskData.data;
+
+          for (let i = 0; i < out.length; i += 4) {
+            const alpha = mask[i] / 255; // R channel of mask (white=1, black=0)
+            out[i]     = out[i]     * (1 - alpha) + vid[i]     * alpha;
+            out[i + 1] = out[i + 1] * (1 - alpha) + vid[i + 1] * alpha;
+            out[i + 2] = out[i + 2] * (1 - alpha) + vid[i + 2] * alpha;
+          }
+
+          outCtx.putImageData(origData, 0, 0);
+          frameCount++;
+          requestAnimationFrame(processFrame);
+        }
+
+        recorder.start();
+        video.play().then(() => {
+          processFrame();
+        });
+      }
+    };
+
+    video.onerror = () => reject(new Error('動画の読み込みに失敗しました'));
+  });
+}
 </script>
 </body>
 </html>

@@ -488,21 +488,44 @@ window.generate = async function() {
     const enhancedPrompt = `Generate a smooth, high-quality video from this image. Animate ${regionDesc}: ${prompt}. IMPORTANT: Keep ALL other parts of the image completely static and unchanged. No camera movement, no zoom, no pan. Only the specified region should move. The animation should be natural, smooth, and seamless for looping.`;
     console.log('Enhanced prompt:', enhancedPrompt);
 
-    btn.innerHTML = '<span class="spinner"></span>動画を生成中（1〜2分）...';
+    btn.innerHTML = '<span class="spinner"></span>画像を準備中...';
 
-    // Detect aspect ratio from original image
+    // Pad image to 16:9 to prevent Veo from cropping any content
     const imgW = originalImage.naturalWidth;
     const imgH = originalImage.naturalHeight;
-    const ratio = imgW / imgH;
+    const origAR = imgW / imgH;
+    const targetAR = 16 / 9;
     let aspectRatio = '16:9';
-    if (ratio < 0.7) aspectRatio = '9:16';
-    else if (ratio >= 0.7 && ratio <= 1.4) aspectRatio = '16:9'; // closest available
-    console.log(`Image: ${imgW}x${imgH}, ratio: ${ratio.toFixed(2)}, using: ${aspectRatio}`);
+    let paddedImageBase64 = cleanImage;
+    let padInfo = { padded: false, left: 0, top: 0, origW: imgW, origH: imgH, padW: imgW, padH: imgH };
+
+    if (origAR < 0.5) {
+      // Very tall image -> use 9:16
+      aspectRatio = '9:16';
+      const tAR = 9 / 16;
+      if (Math.abs(origAR - tAR) > 0.05) {
+        const result = padImageToAspectRatio(originalImage, tAR);
+        paddedImageBase64 = result.base64;
+        padInfo = { padded: true, ...result };
+      }
+    } else {
+      // Use 16:9
+      if (Math.abs(origAR - targetAR) > 0.05) {
+        const result = padImageToAspectRatio(originalImage, targetAR);
+        paddedImageBase64 = result.base64;
+        padInfo = { padded: true, ...result };
+      }
+    }
+
+    console.log(`Image: ${imgW}x${imgH}, AR: ${origAR.toFixed(2)}, target: ${aspectRatio}, padded: ${padInfo.padded}`);
+    if (padInfo.padded) console.log(`Pad: ${padInfo.padW}x${padInfo.padH}, offset: (${padInfo.left}, ${padInfo.top})`);
+
+    btn.innerHTML = '<span class="spinner"></span>動画を生成中（1〜2分）...';
 
     const operation = await ai.models.generateVideos({
       model: 'veo-2.0-generate-001',
       prompt: enhancedPrompt,
-      image: { imageBytes: cleanImage, mimeType: imageMime },
+      image: { imageBytes: paddedImageBase64, mimeType: 'image/png' },
       config: { aspectRatio, durationSeconds: 8 }
     });
 
@@ -559,12 +582,15 @@ window.generate = async function() {
     const rawBlob = await videoRes.blob();
     const rawBlobUrl = URL.createObjectURL(rawBlob);
 
-    // Composite: mask area from video + original image for unmasked area
-    btn.innerHTML = '<span class="spinner"></span>マスク合成処理中...';
-    const compositedUrl = await compositeVideoWithMask(rawBlobUrl, maskBase64, apiKey);
-    URL.revokeObjectURL(rawBlobUrl);
-
-    goToVideo(compositedUrl);
+    if (padInfo.padded) {
+      // Crop video back to original aspect ratio (remove padding)
+      btn.innerHTML = '<span class="spinner"></span>アスペクト比を復元中...';
+      const croppedUrl = await cropVideoToOriginal(rawBlobUrl, padInfo);
+      URL.revokeObjectURL(rawBlobUrl);
+      goToVideo(croppedUrl);
+    } else {
+      goToVideo(rawBlobUrl);
+    }
 
   } catch (err) {
     console.error(err);
@@ -576,19 +602,79 @@ window.generate = async function() {
   }
 };
 
-// ===== Video + Mask Compositing =====
-// Overlays only the masked region from the generated video onto the original static image.
-// Handles aspect ratio mismatch by center-cropping the video to match the original.
-async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
-  // Load mask image
-  const maskImg = await new Promise((res, rej) => {
-    const img = new Image();
-    img.onload = () => res(img);
-    img.onerror = () => rej(new Error('マスク画像の読み込みに失敗'));
-    img.src = maskDataUrl;
-  });
+// ===== Image Padding (pre-Veo) =====
+// Pads image to target aspect ratio so Veo doesn't crop any content
+function padImageToAspectRatio(img, targetAR) {
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  const currentAR = iw / ih;
 
-  // Load and prepare video
+  let padW, padH, left, top;
+  if (currentAR < targetAR) {
+    // Image is taller than target - add padding on sides
+    padH = ih;
+    padW = Math.round(ih * targetAR);
+    left = Math.round((padW - iw) / 2);
+    top = 0;
+  } else {
+    // Image is wider than target - add padding on top/bottom
+    padW = iw;
+    padH = Math.round(iw / targetAR);
+    left = 0;
+    top = Math.round((padH - ih) / 2);
+  }
+
+  const c = document.createElement('canvas');
+  c.width = padW;
+  c.height = padH;
+  const ctx = c.getContext('2d');
+
+  // Sample edge colors for natural padding
+  // Draw image first to sample, then pad
+  ctx.drawImage(img, left, top, iw, ih);
+
+  // Fill padding with edge-sampled color (average of borders)
+  const edgeCanvas = document.createElement('canvas');
+  edgeCanvas.width = iw;
+  edgeCanvas.height = ih;
+  const ectx = edgeCanvas.getContext('2d');
+  ectx.drawImage(img, 0, 0);
+
+  // Sample average color from all edges
+  let r = 0, g = 0, b = 0, count = 0;
+  const edata = ectx.getImageData(0, 0, iw, ih).data;
+  // Top and bottom rows
+  for (let x = 0; x < iw; x++) {
+    const ti = (x) * 4;
+    const bi = ((ih - 1) * iw + x) * 4;
+    r += edata[ti] + edata[bi];
+    g += edata[ti+1] + edata[bi+1];
+    b += edata[ti+2] + edata[bi+2];
+    count += 2;
+  }
+  // Left and right columns
+  for (let y = 0; y < ih; y++) {
+    const li = (y * iw) * 4;
+    const ri = (y * iw + iw - 1) * 4;
+    r += edata[li] + edata[ri];
+    g += edata[li+1] + edata[ri+1];
+    b += edata[li+2] + edata[ri+2];
+    count += 2;
+  }
+  const avgColor = `rgb(${Math.round(r/count)},${Math.round(g/count)},${Math.round(b/count)})`;
+
+  // Clear and redraw with padding
+  ctx.fillStyle = avgColor;
+  ctx.fillRect(0, 0, padW, padH);
+  ctx.drawImage(img, left, top, iw, ih);
+
+  const base64 = c.toDataURL('image/png').split(',')[1];
+  return { base64, left, top, origW: iw, origH: ih, padW, padH };
+}
+
+// ===== Video Cropping (post-Veo) =====
+// Crops the padded video back to original aspect ratio
+async function cropVideoToOriginal(videoBlobUrl, padInfo) {
   const video = document.createElement('video');
   video.muted = true;
   video.playsInline = true;
@@ -602,32 +688,26 @@ async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
 
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  const ow = originalImage.naturalWidth;
-  const oh = originalImage.naturalHeight;
-  console.log(`Compositing: video ${vw}x${vh}, original ${ow}x${oh}`);
+  const { left, top, origW, origH, padW, padH } = padInfo;
 
-  // Prepare canvases
+  // Calculate crop region in video coordinates
+  // Video is padW x padH mapped to vw x vh
+  const scaleX = vw / padW;
+  const scaleY = vh / padH;
+  const cropX = Math.round(left * scaleX);
+  const cropY = Math.round(top * scaleY);
+  const cropW = Math.round(origW * scaleX);
+  const cropH = Math.round(origH * scaleY);
+
+  console.log(`Crop: video ${vw}x${vh}, crop region: (${cropX},${cropY}) ${cropW}x${cropH}, output: ${origW}x${origH}`);
+
+  // Output canvas at original image size
   const outCanvas = document.createElement('canvas');
-  outCanvas.width = ow;
-  outCanvas.height = oh;
-  const outCtx = outCanvas.getContext('2d', { willReadFrequently: true });
+  outCanvas.width = origW;
+  outCanvas.height = origH;
+  const outCtx = outCanvas.getContext('2d');
 
-  const tmpCanvas = document.createElement('canvas');
-  tmpCanvas.width = ow;
-  tmpCanvas.height = oh;
-  const tmpCtx = tmpCanvas.getContext('2d', { willReadFrequently: true });
-
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = ow;
-  maskCanvas.height = oh;
-  const maskCtx = maskCanvas.getContext('2d');
-  // Apply blur to mask edges for smoother blending
-  maskCtx.filter = 'blur(8px)';
-  maskCtx.drawImage(maskImg, 0, 0, ow, oh);
-  maskCtx.filter = 'none';
-  const maskData = maskCtx.getImageData(0, 0, ow, oh).data;
-
-  // Record composited output
+  // Record cropped output
   const stream = outCanvas.captureStream(30);
   const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
     ? 'video/webm;codecs=vp9' : 'video/webm';
@@ -642,11 +722,8 @@ async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
     };
   });
 
-  // Start playback and compositing
   recorder.start();
   await video.play();
-
-  // Wait a moment for the first frame to actually decode
   await new Promise(r => setTimeout(r, 50));
 
   let frameCount = 0;
@@ -655,39 +732,20 @@ async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
     function processFrame() {
       if (video.ended || video.paused) {
         recorder.stop();
-        console.log(`Compositing done: ${frameCount} frames`);
+        console.log(`Crop done: ${frameCount} frames`);
         resolve();
         return;
       }
 
-      // Draw center-cropped video frame at original image size
-      // Stretch video frame to match original image dimensions
-      tmpCtx.drawImage(video, 0, 0, ow, oh);
-      const vidPixels = tmpCtx.getImageData(0, 0, ow, oh).data;
-
-      // Draw original image
-      outCtx.drawImage(originalImage, 0, 0, ow, oh);
-      const outData = outCtx.getImageData(0, 0, ow, oh);
-      const out = outData.data;
-
-      // Per-pixel blend: mask white = video, mask black = original
-      for (let i = 0; i < out.length; i += 4) {
-        const alpha = maskData[i] / 255;
-        if (alpha > 0.01) {
-          out[i]     = out[i]     * (1 - alpha) + vidPixels[i]     * alpha;
-          out[i + 1] = out[i + 1] * (1 - alpha) + vidPixels[i + 1] * alpha;
-          out[i + 2] = out[i + 2] * (1 - alpha) + vidPixels[i + 2] * alpha;
-        }
-      }
-
-      outCtx.putImageData(outData, 0, 0);
+      // Draw only the original image region from the video frame
+      outCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, origW, origH);
       frameCount++;
       requestAnimationFrame(processFrame);
     }
 
     video.onended = () => {
       recorder.stop();
-      console.log(`Compositing done (ended): ${frameCount} frames`);
+      console.log(`Crop done (ended): ${frameCount} frames`);
       resolve();
     };
 

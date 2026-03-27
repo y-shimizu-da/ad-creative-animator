@@ -577,116 +577,139 @@ window.generate = async function() {
 };
 
 // ===== Video + Mask Compositing =====
-// Overlays only the masked region from the generated video onto the original static image
+// Overlays only the masked region from the generated video onto the original static image.
+// Handles aspect ratio mismatch by center-cropping the video to match the original.
 async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.src = videoBlobUrl;
-    video.muted = true;
-    video.playsInline = true;
+  // Load mask image
+  const maskImg = await new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error('マスク画像の読み込みに失敗'));
+    img.src = maskDataUrl;
+  });
 
-    // Load mask as image
-    const maskImg = new Image();
-    maskImg.src = maskDataUrl;
+  // Load and prepare video
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.src = videoBlobUrl;
 
-    video.onloadedmetadata = () => {
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      const ow = originalImage.naturalWidth;
-      const oh = originalImage.naturalHeight;
+  await new Promise((res, rej) => {
+    video.oncanplaythrough = res;
+    video.onerror = () => rej(new Error('動画の読み込みに失敗'));
+    video.load();
+  });
 
-      console.log(`Compositing: video ${vw}x${vh}, original ${ow}x${oh}`);
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const ow = originalImage.naturalWidth;
+  const oh = originalImage.naturalHeight;
+  console.log(`Compositing: video ${vw}x${vh}, original ${ow}x${oh}`);
 
-      // Output canvas at original image size
-      const outCanvas = document.createElement('canvas');
-      outCanvas.width = ow;
-      outCanvas.height = oh;
-      const outCtx = outCanvas.getContext('2d');
+  // Calculate how to map video frame onto original image coordinates.
+  // Veo may crop/pad the image to fit 16:9, so we need to figure out
+  // which part of the video corresponds to the original image.
+  // Strategy: center-crop the video to match the original aspect ratio,
+  // then scale to original dimensions.
+  const videoAR = vw / vh;
+  const origAR = ow / oh;
+  let sx = 0, sy = 0, sw = vw, sh = vh;
+  if (videoAR > origAR) {
+    // Video is wider - crop sides
+    sw = Math.round(vh * origAR);
+    sx = Math.round((vw - sw) / 2);
+  } else if (videoAR < origAR) {
+    // Video is taller - crop top/bottom
+    sh = Math.round(vw / origAR);
+    sy = Math.round((vh - sh) / 2);
+  }
+  console.log(`Video crop: sx=${sx} sy=${sy} sw=${sw} sh=${sh}`);
 
-      // Temp canvas for video frame at original size
-      const tmpCanvas = document.createElement('canvas');
-      tmpCanvas.width = ow;
-      tmpCanvas.height = oh;
-      const tmpCtx = tmpCanvas.getContext('2d');
+  // Prepare canvases
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = ow;
+  outCanvas.height = oh;
+  const outCtx = outCanvas.getContext('2d', { willReadFrequently: true });
 
-      // Mask canvas for per-pixel blending
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = ow;
-      maskCanvas.height = oh;
-      const maskCtx = maskCanvas.getContext('2d');
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = ow;
+  tmpCanvas.height = oh;
+  const tmpCtx = tmpCanvas.getContext('2d', { willReadFrequently: true });
 
-      // Draw mask
-      maskImg.onload = () => {
-        maskCtx.drawImage(maskImg, 0, 0, ow, oh);
-        startRecording();
-      };
-      if (maskImg.complete) {
-        maskCtx.drawImage(maskImg, 0, 0, ow, oh);
-        startRecording();
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = ow;
+  maskCanvas.height = oh;
+  const maskCtx = maskCanvas.getContext('2d');
+  maskCtx.drawImage(maskImg, 0, 0, ow, oh);
+  const maskData = maskCtx.getImageData(0, 0, ow, oh).data;
+
+  // Record composited output
+  const stream = outCanvas.captureStream(30);
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+    ? 'video/webm;codecs=vp9' : 'video/webm';
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8000000 });
+  const chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+  const resultPromise = new Promise((resolve) => {
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      resolve(URL.createObjectURL(blob));
+    };
+  });
+
+  // Start playback and compositing
+  recorder.start();
+  await video.play();
+
+  // Wait a moment for the first frame to actually decode
+  await new Promise(r => setTimeout(r, 50));
+
+  let frameCount = 0;
+
+  await new Promise((resolve) => {
+    function processFrame() {
+      if (video.ended || video.paused) {
+        recorder.stop();
+        console.log(`Compositing done: ${frameCount} frames`);
+        resolve();
+        return;
       }
 
-      function startRecording() {
-        // Use MediaRecorder to capture composited frames
-        const stream = outCanvas.captureStream(30);
-        const recorder = new MediaRecorder(stream, {
-          mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-            ? 'video/webm;codecs=vp9'
-            : 'video/webm',
-          videoBitsPerSecond: 8000000
-        });
-        const chunks = [];
-        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'video/webm' });
-          resolve(URL.createObjectURL(blob));
-        };
-        recorder.onerror = e => reject(new Error('録画エラー: ' + e.error));
+      // Draw center-cropped video frame at original image size
+      tmpCtx.drawImage(video, sx, sy, sw, sh, 0, 0, ow, oh);
+      const vidPixels = tmpCtx.getImageData(0, 0, ow, oh).data;
 
-        const maskData = maskCtx.getImageData(0, 0, ow, oh);
+      // Draw original image
+      outCtx.drawImage(originalImage, 0, 0, ow, oh);
+      const outData = outCtx.getImageData(0, 0, ow, oh);
+      const out = outData.data;
 
-        let frameCount = 0;
-
-        function processFrame() {
-          if (video.paused || video.ended) {
-            recorder.stop();
-            console.log(`Compositing done: ${frameCount} frames`);
-            return;
-          }
-
-          // Draw video frame scaled to original image size
-          tmpCtx.drawImage(video, 0, 0, ow, oh);
-          const videoFrame = tmpCtx.getImageData(0, 0, ow, oh);
-
-          // Draw original image
-          outCtx.drawImage(originalImage, 0, 0, ow, oh);
-          const origData = outCtx.getImageData(0, 0, ow, oh);
-
-          // Blend: where mask is white, use video; where black, use original
-          const out = origData.data;
-          const vid = videoFrame.data;
-          const mask = maskData.data;
-
-          for (let i = 0; i < out.length; i += 4) {
-            const alpha = mask[i] / 255; // R channel of mask (white=1, black=0)
-            out[i]     = out[i]     * (1 - alpha) + vid[i]     * alpha;
-            out[i + 1] = out[i + 1] * (1 - alpha) + vid[i + 1] * alpha;
-            out[i + 2] = out[i + 2] * (1 - alpha) + vid[i + 2] * alpha;
-          }
-
-          outCtx.putImageData(origData, 0, 0);
-          frameCount++;
-          requestAnimationFrame(processFrame);
+      // Per-pixel blend: mask white = video, mask black = original
+      for (let i = 0; i < out.length; i += 4) {
+        const alpha = maskData[i] / 255;
+        if (alpha > 0.01) {
+          out[i]     = out[i]     * (1 - alpha) + vidPixels[i]     * alpha;
+          out[i + 1] = out[i + 1] * (1 - alpha) + vidPixels[i + 1] * alpha;
+          out[i + 2] = out[i + 2] * (1 - alpha) + vidPixels[i + 2] * alpha;
         }
-
-        recorder.start();
-        video.play().then(() => {
-          processFrame();
-        });
       }
+
+      outCtx.putImageData(outData, 0, 0);
+      frameCount++;
+      requestAnimationFrame(processFrame);
+    }
+
+    video.onended = () => {
+      recorder.stop();
+      console.log(`Compositing done (ended): ${frameCount} frames`);
+      resolve();
     };
 
-    video.onerror = () => reject(new Error('動画の読み込みに失敗しました'));
+    requestAnimationFrame(processFrame);
   });
+
+  return resultPromise;
 }
 </script>
 </body>

@@ -606,25 +606,6 @@ async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
   const oh = originalImage.naturalHeight;
   console.log(`Compositing: video ${vw}x${vh}, original ${ow}x${oh}`);
 
-  // Calculate how to map video frame onto original image coordinates.
-  // Veo may crop/pad the image to fit 16:9, so we need to figure out
-  // which part of the video corresponds to the original image.
-  // Strategy: center-crop the video to match the original aspect ratio,
-  // then scale to original dimensions.
-  const videoAR = vw / vh;
-  const origAR = ow / oh;
-  let sx = 0, sy = 0, sw = vw, sh = vh;
-  if (videoAR > origAR) {
-    // Video is wider - crop sides
-    sw = Math.round(vh * origAR);
-    sx = Math.round((vw - sw) / 2);
-  } else if (videoAR < origAR) {
-    // Video is taller - crop top/bottom
-    sh = Math.round(vw / origAR);
-    sy = Math.round((vh - sh) / 2);
-  }
-  console.log(`Video crop: sx=${sx} sy=${sy} sw=${sw} sh=${sh}`);
-
   // Prepare canvases
   const outCanvas = document.createElement('canvas');
   outCanvas.width = ow;
@@ -640,7 +621,10 @@ async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
   maskCanvas.width = ow;
   maskCanvas.height = oh;
   const maskCtx = maskCanvas.getContext('2d');
+  // Apply blur to mask edges for smoother blending
+  maskCtx.filter = 'blur(8px)';
   maskCtx.drawImage(maskImg, 0, 0, ow, oh);
+  maskCtx.filter = 'none';
   const maskData = maskCtx.getImageData(0, 0, ow, oh).data;
 
   // Record composited output
@@ -677,7 +661,8 @@ async function compositeVideoWithMask(videoBlobUrl, maskDataUrl) {
       }
 
       // Draw center-cropped video frame at original image size
-      tmpCtx.drawImage(video, sx, sy, sw, sh, 0, 0, ow, oh);
+      // Stretch video frame to match original image dimensions
+      tmpCtx.drawImage(video, 0, 0, ow, oh);
       const vidPixels = tmpCtx.getImageData(0, 0, ow, oh).data;
 
       // Draw original image
